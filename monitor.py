@@ -40,22 +40,20 @@ def check_ticket_status():
         soup = BeautifulSoup(response.text, "html.parser")
         page_text = soup.get_text()
 
-        sold_out_flags = ["已售完", "全數售完", "暫無票券"]
+        # 1. 檢查售完字樣
+        sold_out_flags = ["已售完", "全數售完", "暫無票券", "全數售罄"]
         is_sold_out = any(flag in page_text for flag in sold_out_flags)
 
-        buy_button_flags = ["立即購票", "前往購票", "尚有票券"]
-        has_buy_button = any(flag in page_text for flag in buy_button_flags)
-
-        print(f"檢查結果 -> 是否標記售完: {is_sold_out} | 是否有購票字樣: {has_buy_button}")
-
-        if not is_sold_out or has_buy_button:
-            print("偵測到可能有票，發送 Discord 通知！")
+        # 2. 只有在「完全沒有售完字樣」的情況下，才判定為有票
+        # 排除常駐的「前往購票」假警報
+        if not is_sold_out:
+            print("偵測到『售完』標記消失，可能有釋票！發送推播。")
             send_discord_notify(
-                "偵測到活動頁面開放購票或有釋票！",
-                "頁面目前顯示非售完狀態，請火速手動前往確認並作答！"
+                "偵測到售罄狀態解除！",
+                "頁面目前未顯示售完，可能有退票釋出，請點擊連結手動確認！"
             )
         else:
-            print("目前確認全數售完，持續監控中。")
+            print("目前網頁明確標記已售完，不發送通知。")
 
     except Exception as e:
         print(f"執行爬蟲時發生錯誤: {e}")
