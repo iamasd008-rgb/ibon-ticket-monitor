@@ -4,7 +4,6 @@ import json
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
-# 活動頁面與 ibon 真正的票況資料 API
 ACTIVITY_ID = "39903"
 TARGET_URL = f"https://ticket.ibon.com.tw/ActivityInfo/Details/{ACTIVITY_ID}"
 API_URL = f"https://ticket.ibon.com.tw/ActivityInfo/GetProductInformationApi?activityId={ACTIVITY_ID}"
@@ -22,7 +21,7 @@ def send_discord_notify(message):
         return
         
     payload = {
-        "content": f"🚨 **【ibon 票況變更通知】**\n{message}\n🔗 **快速購票連結**: {TARGET_URL}"
+        "content": f"🚨 **【ibon 釋票即時提醒】**\n{message}\n🔗 **快速購票連結**: {TARGET_URL}"
     }
     
     try:
@@ -34,33 +33,71 @@ def send_discord_notify(message):
     except Exception as e:
         print(f"推播發送例外: {e}")
 
+def recursive_find_available_tickets(data):
+    """
+    遞迴掃描 JSON 內所有的票種/區域節點，尋找非售完的票券
+    """
+    available_items = []
+    
+    if isinstance(data, dict):
+        # 檢查常見代表「售罄」與「名稱」的欄位
+        is_sold_out = None
+        for key in ["isSoldOut", "IsSoldOut", "soldOut", "SoldOut"]:
+            if key in data and isinstance(data[key], bool):
+                is_sold_out = data[key]
+                break
+        
+        # 如果該節點有明確標記「未售罄」
+        if is_sold_out is False:
+            name = data.get("name") or data.get("Name") or data.get("priceName") or "可購區域"
+            price = data.get("price") or data.get("Price") or ""
+            available_items.append(f"• {name} (票價: {price})".strip())
+        
+        # 繼續往下層子節點遞迴搜尋
+        for v in data.values():
+            available_items.extend(recursive_find_available_tickets(v))
+            
+    elif isinstance(data, list):
+        for item in data:
+            available_items.extend(recursive_find_available_tickets(item))
+            
+    return available_items
+
 def check_ticket_status():
     try:
-        # 直接查詢官方後端 JSON 資料
         response = requests.get(API_URL, headers=HEADERS, timeout=15)
         
-        # 若 API 回傳失敗，再回退抓一般頁面檢查
         if response.status_code != 200:
-            print(f"API 請求失敗，代碼: {response.status_code}")
+            print(f"API 請求失敗，HTTP 代碼: {response.status_code}")
             return
 
         raw_text = response.text
         print(f"API 回傳長度: {len(raw_text)}")
 
-        # 在 ibon 系統的 API 資料中，售罄場次通常帶有 "IsSoldOut": true 或 status 標記
-        # 若含有已售完狀態，且沒有可售狀態，則認定為全數售完
-        has_sold_out_signal = ("已售完" in raw_text) or ('"IsSoldOut":true' in raw_text) or ('"isSoldOut":true' in raw_text)
-        
-        # 檢查是否有可購買狀態（非售完標籤）
-        has_available_ticket = ('"IsSoldOut":false' in raw_text) or ('"isSoldOut":false' in raw_text)
+        # 1. 嘗試以標準 JSON 解析
+        try:
+            data = response.json()
+            available_areas = recursive_find_available_tickets(data)
+        except Exception:
+            available_areas = []
 
-        print(f"狀態比對 -> 售完標記: {has_sold_out_signal} | 可售標記: {has_available_ticket}")
+        # 2. 容錯機制：如果 JSON 結構異常，改用精準正則關鍵字比對
+        # 只要出現 "IsSoldOut": false 或 "isSoldOut": false 就認定有票
+        fallback_available = ('"IsSoldOut":false' in raw_text.replace(" ", "")) or \
+                             ('"isSoldOut":false' in raw_text.replace(" ", ""))
 
-        if has_available_ticket and not has_sold_out_signal:
-            print("確認偵測到有效釋票！發送 Discord 推播。")
-            send_discord_notify("🎯 偵測到官方後端釋出票券！請立即點擊連結前往搶購！")
+        if available_areas:
+            unique_areas = list(set(available_areas))
+            detail_msg = "\n".join(unique_areas)
+            print(f"偵測到有區域釋票: {detail_msg}")
+            send_discord_notify(f"🎯 **偵測到以下區域釋出票券！**\n{detail_msg}\n請火速前往手動作答與購票！")
+            
+        elif fallback_available:
+            print("備用語法判定：偵測到非售罄標籤！")
+            send_discord_notify("🎯 **偵測到系統釋出剩餘票券！**\n請立即點擊連結前往確認！")
+            
         else:
-            print("目前官方資料確認仍為售罄狀態，保持安靜。")
+            print("目前所有區域均為售完狀態，持續監控中。")
 
     except Exception as e:
         print(f"執行爬蟲時發生錯誤: {e}")
