@@ -1,11 +1,9 @@
 name: Ibon Ticket Monitor
 
 on:
-      schedule:
-    # 每 5 分鐘在背景自動檢查一次
-    - cron: '*/5 * * * *'
-
-  workflow_dispatch: # 支援在網頁上隨時手動點擊測試
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
 jobs:
   check-ticket:
@@ -21,9 +19,9 @@ jobs:
 
       - name: 安裝相依套件
         run: |
-          pip install requests beautifulsoup4
+          pip install requests
 
-      - name: 執行票況檢查
+      - name: 執行高頻票況檢查
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
